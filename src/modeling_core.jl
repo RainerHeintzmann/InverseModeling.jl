@@ -169,7 +169,8 @@ performs the optimization of the model parameters by calling Optim.optimize() an
 #arguments
 + `start_val`: the set of parameters over which the optimization is performed
 + `fwd_model`: the model which is optimized.
-+ `loss_type`: the type of the loss function to use.
++ `meas`: measurement data to be compared to the forward projection
++ `loss_type`: the type of the loss function to use. Default: `loss_gaussian`
 + `iterations`      : number of iterations to perform (default: 100). This is provided via the `Optim.Options` stucture.
 + `optimizer=LBFGS()`: the optimizer to use
 
