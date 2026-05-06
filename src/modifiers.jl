@@ -1,14 +1,22 @@
-export Fixed, Normalize, ClampSum, Positive, PositiveH, BoundedSoftMax, BoundedSoftMaxH
 
-abstract type Modificator end
+export Fixed, Normalize, ClampSum, Positive, PositiveH
+export BoundedSoftMax, BoundedSoftMaxH
+export MaskOnly
 
-function Base.size(d::Modificator, varargs...)
+"""
+    abstract type Modifier end
+ This type is the base-type of various pre-forward models which typically place constraints
+ onto domain of parameters to optimize.
+"""
+abstract type Modifier end
+
+function Base.size(d::Modifier, varargs...)
     return size(d.data, varargs...)
 end
 
-# Functions which all Modificators should implement:
+# Functions which all Modifiers should implement:
 # These are the bare fallback versions:
-# by default all Modificators are not fixed, i.e. they are part of the fit:
+# by default all Modifiers are not fixed, i.e. they are part of the fit:
 is_fixed(val) = false
 # this returns just the bare value
 get_val(val) = val
@@ -20,9 +28,12 @@ get_inv_val(val, fct) = fct(val)
 
 # this datatyp specifies that this parameter is not part of the fit
 """
-    struct Fixed{T} <: Modificator
+    struct Fixed{T} <: Modifier
+
+The `Fixed` property applied to a parameter removes the parameter from the optimization framework
+without modifying the forward function which can still access this parameter. It is just not optimized. 
 """
-struct Fixed{T} <: Modificator
+struct Fixed{T} <: Modifier
     data::T
 end
 # if Fixed appears anywhere in a chain of modifyers, all of them are ignored
@@ -34,13 +45,13 @@ get_inv_val(val::Fixed, fct=identity) = get_inv_val(val.data, fct)
 
 
 """  
-    struct Normalize{T,F} <: Modificator
-    this datatyp specifies that this parameter is normalized before the fit 
+    struct Normalize{T,F} <: Modifier
+    this type specifies that this parameter is normalized before the fit 
     this is achieved by deviding by the factor in the inverse path and multiplying by it in the forward model.
     Note that by chosing a fit parameter `p` for example using `Normalize(p, maximum(p))` or `Normalize(p, mean(p))`, the fit-variable will be unitless,
     but the result will automatically be cast back to the original scale. This helps the fit to converge.
 """
-struct Normalize{T,F} <: Modificator
+struct Normalize{T,F} <: Modifier
     data::T
     factor::F
 end
@@ -58,7 +69,7 @@ function clamp_sum(val)
 end
 
 """ 
-    struct ClampSum{T, S, N} <: Modificator
+    struct ClampSum{T, S, N} <: Modifier
     this contraint ensures that the value will never change its sum (optionally over predifined dimensions) during optimization. This is useful to avoid ambiguities during optimization.
     In practice the last value is simply computed by the given initial sum minus all other values.
 """
@@ -69,7 +80,7 @@ struct ClampSum{T, S, N}
 end
 
 """ 
-struct ClampSum(dat::T, dims=ntuple((n)->n, ndims(dat))) where {T} <: Modificator
+struct ClampSum(dat::T, dims=ntuple((n)->n, ndims(dat))) where {T} <: Modifier
 
 convenience constructor. 
 # Arguments
@@ -104,12 +115,12 @@ end
 get_inv_val(val::ClampSum, fct=identity) = get_inv_val(val.data, (x)->clamp_sum(fct.(x)))
 
 """ 
-struct Positive{T} <: Modificator
-    this datatyp specifies that this parameter is positive during the fit
+struct Positive{T} <: Modifier
+    this datatype specifies that this parameter is positive during the fit
     this is achieved by introducing an auxiliary function whos abs2.() yields the parameter
     Note that the inverse operation will return the square root of the value, picking only the positive branch as the starting value.
 """
-struct Positive{T} <: Modificator
+struct Positive{T} <: Modifier
     data::T
 end
 is_fixed(val::Positive) = is_fixed(val.data)
@@ -123,12 +134,12 @@ sigmoid(x) = 1 / (1 + exp(-x))
 logit(x) = log(x / (1 - x))
 
 """
-    struct BoundedSoftMax{T} <: Modificator
-    this datatyp specifies that parameter is bounded between `lower` and `upper` values. 
+    struct BoundedSoftMax{T} <: Modifier
+    this datatype specifies that parameter is bounded between `lower` and `upper` values. 
     Achieved with sigmoid function to map the optimizer variable to the range [lower, upper].
     The inverse mapping is done by using the logit function.
 """
-struct BoundedSoftMax{T} <: Modificator
+struct BoundedSoftMax{T} <: Modifier
     data::T
     lower::eltype(T)
     upper::eltype(T)
@@ -161,12 +172,12 @@ piecewise_hyperbolic(x) = ifelse(x < 0, 1/(1-x), 1+x)
 piecewise_hyperbolic_inv(x) = ifelse(x < 1, 1 - 1/x, x - 1)
 
 """
-    struct PositiveH{T} <: Modificator
-    this datatyp specifies that this parameter is positive during the fit
+    struct PositiveH{T} <: Modifier
+    this datatype specifies that this parameter is positive during the fit
     this is achieved by introducing an auxiliary function whos abs2.() yields the parameter
     Note that the inverse operation will return the square root of the value, picking only the positive branch as the starting value.
 """
-struct PositiveH{T} <: Modificator
+struct PositiveH{T} <: Modifier
     data::T
 end
 is_fixed(val::PositiveH) = is_fixed(val.data)
@@ -180,12 +191,12 @@ sigmoid_hyperbolic(x) = 1 / (1 + piecewise_hyperbolic(-x))
 sigmoid_hyperbolic_inv(x) = piecewise_hyperbolic_inv(x / (1 - x))
 
 """
-struct BoundedSoftMaxH{T} <: Modificator
-    this datatyp specifies that parameter is bounded between `lower` and `upper` values. 
+struct BoundedSoftMaxH{T} <: Modifier
+    this datatype specifies that parameter is bounded between `lower` and `upper` values. 
     Achieved with sigmoid function to map the optimizer variable to the range [lower, upper].
     The inverse mapping is done by using the logit function.
 """
-struct BoundedSoftMaxH{T} <: Modificator
+struct BoundedSoftMaxH{T} <: Modifier
     data::T
     lower::eltype(T)
     upper::eltype(T)
@@ -210,3 +221,28 @@ get_fwd_val(val::BoundedSoftMaxH) = val.lower .+ (val.upper - val.lower) .* sigm
 get_fwd_val(val::BoundedSoftMaxH, id, fit, non_fit) = val.lower .+ (val.upper - val.lower) .* sigmoid_hyperbolic.(get_fwd_val(val.data, id, fit, non_fit))
 
 get_inv_val(val::BoundedSoftMaxH, fct=identity) = get_inv_val(val.data, (x) -> sigmoid_hyperbolic_inv.((fct.(x) .- val.lower) ./ (val.upper - val.lower)))
+
+
+"""
+    struct MaskOnly{T} <: Modifier
+    this datatype specifies that parameter is bounded between `lower` and `upper` values. 
+    Achieved with sigmoid function to map the optimizer variable to the range [lower, upper].
+    The inverse mapping is done by using the logit function.
+"""
+struct MaskOnly{V, T, M} <: Modifier
+    data::V
+    tmp_data::T
+    mask::M
+
+    function MaskOnly(dat::T, mask::M) where {BT,D,T<:AbstractArray{BT, D}, M<:AbstractArray{Bool,D}}
+        tmp_data = copy(dat)
+        return new{typeof(dat[mask]), T,M}(dat[mask], tmp_data, mask)
+    end
+end
+
+is_fixed(val::MaskOnly) = is_fixed(val.data)
+get_val(val::MaskOnly) = get_val(val.data)
+get_fwd_val(val::MaskOnly) = into_mask!(get_fwd_val(val.data), val.mask, val.tmp_data)
+get_fwd_val(val::MaskOnly, id, fit, non_fit) = into_mask!(get_fwd_val(val.data, id, fit, non_fit), val.mask, val.tmp_data)
+
+get_inv_val(val::MaskOnly, fct=identity) = get_inv_val(val.tmp_data, (x) -> fct.(x)[val.mask])

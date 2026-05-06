@@ -1,4 +1,4 @@
-using InverseModeling, Plots # , Optim
+using InverseModeling
 start_val = (σ=Positive([8.0, 25.0]),
         μ=Fixed([1.0, 3.0]) )
 
@@ -17,6 +17,7 @@ start_vals.σ += [0.5,0.2]
 bare, fit_res = get_fit_results(optim_res)
 fit = forward(bare)
 
+using Plots # , Optim
 plot(times, forward(start_vals), label="start values")
 scatter!(times, meas, label="measurement")
 plot!(times, fit, label="fit")

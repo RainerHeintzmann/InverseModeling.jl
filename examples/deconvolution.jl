@@ -6,6 +6,9 @@ using InverseModeling
 using Noise
 using PointSpreadFunctions
 using Statistics
+using NDTools
+using TestImages
+using BenchmarkTools
 # using SyntheticObjects
 # using Zygote
 
@@ -14,7 +17,7 @@ function test_deconv()
     λ_em = 0.520
     sampling = (0.050,0.050,0.200)
 
-    obj = select_region(Float32.(testimage("resolution_test_512")), new_size=(128,128), center=(249,374)) .* 50000;
+    # obj = select_region(Float32.(testimage("resolution_test_512")), new_size=(128,128), center=(249,374)) .* 50000;
     obj = Float32.(testimage("simple_3d_ball.tif"))
 
     sz = size(obj)
@@ -45,15 +48,35 @@ function test_deconv()
     nphotons = 100;
     nimg = poisson(pimg, nphotons)
 
-    @vt obj pimg nimg
+    # @vt obj pimg nimg
 
     # deconvolution
     start_val = (obj=Positive(mean(nimg).*ones(Float32, size(nimg))),)
     # start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_conv, start_val)
     # optim_res = InverseModeling.optimize(loss(nimg, forward), start_vals, iterations=80);
-    res1, myloss1 = optimize_model(start_val, fwd_conv, nimg; iterations=50)
+    iterations = 50
+    @time q = optimize_model(start_val, fwd_conv, nimg; iterations=iterations);
+    res1, myloss1 = q # 1.7 s
 
-    @vt obj nimg res1[:obj]
+    @time q = optimize_model(start_val, fwd_conv, nimg; iterations=iterations, regularization=reg_TV(:obj, 5f-5)); # ; num_dims=3
+    res2, myloss2 = q # 4.4
+    @vt obj nimg 
+    @vt res1[:obj]
+    @vt res2[:obj]
+
+    iterations = 10
+    @btime q = optimize_model($start_val, $fwd_conv, $nimg; iterations=$iterations, regularization=$reg_TV(:obj, 5f-5));
+    # measured: 1.54 sec  views, 2.04 Gb
+    # measured: 1.28 sec  _cuda, 1.92 Gb
+    # broadcast: 1.49 sec, 2.01 GiB
+    # tuple broadcast: 1.36 sec, 1.95 GiB
+    # direct list (3): 1.295 sec, 1.92 GiB
+
+
+    # does cause problems:
+    # revise(InverseModeling)
+    # res1, myloss1 = optimize_model(start_val, fwd_conv, nimg; iterations=50, regularization=reg_TV(:obj;num_dims=ndims(nimg)))
+
 
 end
 

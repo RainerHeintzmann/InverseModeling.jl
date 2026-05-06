@@ -39,25 +39,43 @@ function prepare_fit(vals, dtype=Float64)  #
     fit_params = ComponentArray(fit_named_tuple) # the optim routine cannot deal with tuples. ComponentArray{dtype} does NOT work for CUDA!
     fixed_params = ComponentArray(non_fit_named_tuple) # ComponentArray{dtype} does NOT work for CUDA!
 
-    function get_fit_results(res)
+    function get_fit_results(res::ComponentVector)
+        # @show typeof(res)
         # g(id) = get_val(getindex(fit_params, id), id, fit_params, fixed_params) 
-        bare = res.minimizer # Optim.minimizer(res)
+        bare = res; # Optim.minimizer(res)
         all_keys = keys(bare)
         # The line below may apply pre-forward-models to the fit results. This is not necessary for the fixed params
         fwd = NamedTuple{all_keys}(collect(get_fwd_val(vals[id], id, bare, fixed_params) for id in keys(bare)))
         fwd = merge(fwd, fixed_params)
         return bare, fwd
     end
+    """
+        get_fit_results(res::Optim.MultivariateOptimizationResults)
+
+    this version of `get_fit_results` is applied to the result of optim and first extracts
+    the result data via `Optim.minimizer(res)` and then calles the internally defined get_fit_results function.
+
+    """
+    function get_fit_results(res::Optim.MultivariateOptimizationResults)
+        get_fit_results(Optim.minimizer(res))
+    end
 
     return fit_params, fixed_params, get_fit_results, stripped_params
 end
 
+
+
 """
-    create_forward(fwd, params)
+    create_forward(fwd, params, dtype=Float32)
 
 creates a forward model given a model function `fwd` and a set of parameters `param`.
 The properties such as `Positive` or `Normalize` of the modified `params` are baked into the model
-#returns
+
+Can be called with a `NamedTuple` or a `ComponentArray`. This will call the fwd function, 
+which itself needs to access its one argument by function calls with the ids
+fwd(g) which accesses the parameters via g(:myparamname)
+
+# returns
 a tuple of
 `fit_params`    : a collection of the parameters to fit
 `fixed_params`  : a collection of the fixed parameters exluded from the fitting, but provided to the model
@@ -72,7 +90,6 @@ function create_forward(fwd::Function, params, dtype=Float32) #
     # which itself needs to access its one argument by function calls with the ids
     # fwd(g) which accesses the parameters via g(:myparamname)
     function forward(fit_params)
-        # g(id) = get_val(getindex(stripped_params, id), id, fit, fixed_params) 
         # g is a function which receives an id and returns the corresponding paramter.
         # id corresponds to the variable names in a named tuple or ComponentArray
         function g(id) # an accessor function for the parameters
@@ -173,27 +190,51 @@ performs the optimization of the model parameters by calling Optim.optimize() an
 + `loss_type`: the type of the loss function to use. Default: `loss_gaussian`
 + `iterations`      : number of iterations to perform (default: 100). This is provided via the `Optim.Options` stucture.
 + `optimizer=LBFGS()`: the optimizer to use
++ `return_fit`: if `true`, the forward projected result is returned as the second value. Default: `false`
++ `store_trace`. if `true`, the trace of the loss function is returned as the last value
 
-#returns
-the result is a Tuple of `res` and the trace of the loss function value. `res` is a `ComponentArray` with all the results after applying the pre-forward part of the algorithm.
+# returns
+the result is a Tuple of `res`, potentially a forward projected result, and the trace of the loss function value. `res` is a `ComponentArray` with all the results after applying the pre-forward part of the algorithm.
 This includes the values marked as `Fixed()`.
-if the argument ``store_trace=false` is provided no trace will be returned.
+If the argument `store_trace=false` is provided no trace will be returned.
 
 #See also:
 The other (low-level) version of `optimize_model` with the loss function as the first argument.
 """
-function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian; iterations=100, optimizer=LBFGS(), store_trace=true, kwargs...)
+function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian; iterations=100, regularization=nothing, optimizer=LBFGS(), store_trace=true, return_fit=false, kwargs...)
     start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_model, start_val);
-    optim_res = InverseModeling.optimize_model(loss(meas, forward, loss_type), start_vals; iterations=iterations, optimizer=optimizer, store_trace=store_trace, kwargs...);
-    bare, res = get_fit_results(optim_res)
+    total_loss = loss(meas, forward, loss_type)
+    if !isnothing(regularization)
+        # @show typeof(dataloss)
+        # dataloss = regularization
+        reg_on_preforward(parameters) = regularization(get_fit_results(parameters)[2])
+        total_loss = combine(total_loss, reg_on_preforward)
+    end
+    # return total_loss(start_vals) # regularization(get_fit_results(start_vals)[2])
+
+    optim_res = InverseModeling.optimize_model(total_loss, start_vals; iterations=iterations, optimizer=optimizer, store_trace=store_trace, kwargs...);
+    bare, res = get_fit_results(Optim.minimizer(optim_res))
     if store_trace
-        return res, [t.value for t in optim_res.trace][2:end]
+        if (return_fit)
+            return res, forward(Optim.minimizer(optim_res)), [t.value for t in optim_res.trace][2:end]
+        else
+            return res, [t.value for t in optim_res.trace][2:end]
+        end
     else
-        return res
+        if (return_fit)
+            return res, forward(Optim.minimizer(optim_res))
+        else
+            return res
+        end
     end
 end
 
+"""
+    get_loss(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian)
 
+a helper function to easily retrieve the loss of a NamedTuple of starting values or fit results.
+This function is not used inside the InverseModeling framework itself.
+"""
 function get_loss(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian)
     start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_model, start_val);
     loss(meas, forward, loss_type)(start_vals)
