@@ -18,6 +18,6 @@ bare, fit_res = get_fit_results(optim_res)
 fit = forward(bare)
 
 using Plots # , Optim
-plot(times, forward(start_vals), label="start values")
+plot(times, forward(start_vals), label="start values", xlabel="x", ylabel="f(x)")
 scatter!(times, meas, label="measurement")
 plot!(times, fit, label="fit")

@@ -26,12 +26,14 @@ This regularzer is typically used in the context of `optimize()` applied to a mo
 
 """
 function reg_TV(dst::Symbol, λ=1; namedargs...)
-    # myreg = TV(;namedargs...) # crashes!
+    myreg = TV(;namedargs...) # crashes!
     # myreg = TV_cuda(;namedargs...)
-    # my_regularizer(data) = eltype(data[dst])(λ)*myreg(get_fwd_val(data[dst]))
+    # my_regularizer(datap) = myreg(get_fwd_val(datap[dst]))
+    return (my_regularizer(data) = eltype(data[dst])(λ)*myreg(get_fwd_val(data[dst])))
 
     # my_regularizer(data) = eltype(data[dst])(λ)*TV_KA(get_fwd_val(data[dst]); namedargs...)
-    my_regularizer(data) = eltype(data[dst])(λ)*TV_views(get_fwd_val(data[dst]); namedargs...)
+    # my_regularizer(data) = eltype(data[dst])(λ)*TV_views(get_fwd_val(data[dst]); namedargs...)
+    # my_regularizer(data) = get_fwd_val(data[dst]); 
     return my_regularizer 
 end
 

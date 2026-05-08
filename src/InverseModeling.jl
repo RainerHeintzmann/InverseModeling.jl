@@ -17,5 +17,6 @@ include("modifiers.jl")
 include("regularizer.jl")
 include("regularizer_cuda.jl")
 include("regularizer_ka.jl")
+include("regularizer_views.jl")
 include("regularization.jl")
 end # module
