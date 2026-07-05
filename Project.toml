@@ -19,8 +19,8 @@ ComponentArrays = "0.15"
 IndexFunArrays = "0.2"
 LaTeXStrings = "1"
 NDTools = "0.7, 0.8"
-Optim = "1"
-SeparableFunctions = "0.3"
+Optim = "1, 2"
+SeparableFunctions = "0.3, 0.4, 0.5"
 Zygote = "0.7"
 
 [extras]

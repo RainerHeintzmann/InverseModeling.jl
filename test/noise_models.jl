@@ -65,14 +65,15 @@ using FiniteDifferences
 
 
     start_vals = tst_start_vals
-    optim_res = InverseModeling.optimize(myloss, start_vals, iterations=100);
+    optim_res = InverseModeling.optimize_model(myloss, start_vals, iterations=100);
+
     # @show optim_res = Optim.optimize(loss(measured, forward), start_vals, LBFGS())
     bare, res = get_fit_results(optim_res)
     fit = forward(bare);
     @test isapprox(fit, measured, atol=1e-4)
 
     start_vals[:tst1] = start_vals[:tst1] + 1
-    optim_res = InverseModeling.optimize(myloss, start_vals, iterations=100);
+    optim_res = InverseModeling.optimize_model(myloss, start_vals, iterations=100);
     # @show optim_res = Optim.optimize(loss(measured, forward), start_vals, LBFGS())
     bare, res = get_fit_results(optim_res)
     fit = forward(bare);
