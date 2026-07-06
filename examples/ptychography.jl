@@ -20,21 +20,20 @@ function simulate_data(obj, prop_od, prop_ds, diffusor)
     abs2.(atsensor)
 end
 
+function select_region2(screen, sz, ctr)
+    return select_region(screen, sz; center= ctr) # Ref(midpos) .+ 
+end
+
 """
     get_diffusors(screen, shifts)
 
 returns shifted diffusors
 """
 function get_diffusors(sz, screen, shifts)
-    midpos = size(screen).÷2 .+1
-    shifted_screen = []
-    for myshift in eachslice(shifts, dims=1)
-        push!(shifted_scree, select_region(screen, sz; center=ft_center_diff = midpos .+ Tuple(round.(Int, myshift))))
-    end
-    return cat(shifted_screen..., dims=3)
-    # not working in Zygote either:
-    # return cat((select_region(screen, sz; center=ft_center_diff = midpos .+ Tuple(round.(Int, myshift))) for myshift in eachslice(shifts, dims=1))..., dims=3)
-    # return cat((select_region_view(shift(screen, myshift), sz) for myshift in shifts)..., dims=3)
+    tmp = round.(Int, shifts)
+
+    #vectors = NDTools.mat_to_tvec(tmp1', Val(2))
+    return stack(select_region2.(Ref(screen), Ref(sz),  Tuple.(eachslice(tmp, dims=1))); dims=3) # Ref(midpos) .+ 
 end
 
 function fwd_model(params)
@@ -49,7 +48,7 @@ function fwd_model(params)
     atdiffusor = conv_psf(obj, prop_od, (1,2))
     atdiffusor = atdiffusor .* diffusor
     atsensor = conv_psf(atdiffusor, prop_ds, (1,2))
-    abs2.(atsensor)  # return the intensity at the sensor
+    abs2.(atsensor)  # return the stack of intensity images at the sensor
 end
 
 function get_diffusor(sz; σ_mag=1.0, σ_phase=1000.0, fmax = 0.1)
@@ -82,13 +81,14 @@ function main()
     prop_ds = apsf((size(obj)..., 3), pp; sampling=samp_ds)[:,:,3,1]
     # @vt prop_od prop_ds
 
-
     wiggle = 0.5
     scanmag = 20.0
     ctr(x) = Float32.(scanmag.*Vector(x .- (scansz .÷ 2 .+1) .+ wiggle.*rand(2)))
     shifts_r = (ctr.(Tuple.(CartesianIndices(scansz))))[:]
-    shifts = permutedims(cat(shifts_r..., dims=2), (2,1))
+    midpos = 
     screen = get_diffusor(size(obj));
+    midpos = [(size(screen).÷2 .+1)...]
+    shifts = permutedims(cat(shifts_r..., dims=2) .+ midpos, (2,1))
     # diffusor = get_diffusors(size(obj), screen, shifts)
 
     # @vp diffusor
