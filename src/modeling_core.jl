@@ -133,7 +133,7 @@ Other options such as `store_trace=true` can be provided and will be passed to `
 #returns
 the result as provided by Optim.optimize()
 """
-function optimize_model(loss_fkt::Function, start_vals; iterations=100, optimizer=LBFGS(), kwargs...)
+function optimize_model(loss_fkt::Function, start_vals; iterations=100, optimizer=LBFGS(), optimize=Optim.optimize, kwargs...)
     optim_options = Optim.Options(;iterations=iterations, kwargs...)
 
     function fg!(F, G, vec)
@@ -155,14 +155,14 @@ function optimize_model(loss_fkt::Function, start_vals; iterations=100, optimize
     od = OnceDifferentiable(Optim.NLSolversBase.only_fg!(fg!), start_vals)
     # g!(G, vec) = G.=gradient(loss_fkt, vec)[1]
 
-    optim_res = Optim.optimize(od, start_vals, optimizer, optim_options)
+    optim_res = optimize(od, start_vals, optimizer, optim_options)
     # optim_res = Optim.optimize(loss_fkt, g!, start_vals, optimizer, optim_options)
     # optim_res = Optim.optimize(loss_fkt, start_vals, optimizer, optim_options) # ;  autodiff = :forward
     optim_res
 end
 
 """
-    optimize_model(start_val::Tuple, fwd_model::Function, loss_type=loss_gaussian; iterations=100, optimizer=LBFGS(), store_trace=true, kwargs...)
+    optimize_model(start_val::Tuple, fwd_model::Function, meas, loss_type=loss_gaussian; iterations=100, optimizer=LBFGS(), store_trace=true, kwargs...)
 
 performs the optimization of the model parameters by calling Optim.optimize() and returns the result.
 

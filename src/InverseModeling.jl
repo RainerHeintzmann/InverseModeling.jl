@@ -12,5 +12,6 @@ include("noise_models.jl")
 include("modeling_core.jl")
 include("model_gauss.jl")
 include("modifyers.jl")
+include("optimizers.jl")
 
 end # module

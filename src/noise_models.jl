@@ -1,4 +1,4 @@
-export loss_gaussian, loss_poisson, loss_anscombe, loss_poisson_pos, loss_anscombe_pos
+export loss_gaussian, loss_poisson, loss_anscombe, loss_poisson_pos, loss_anscombe_pos, loss_sqrt_anscombe
 
 logmul_safe(dat, val) = ifelse.(val == zero(eltype(val)) && dat == zero(eltype(dat)), zero(eltype(val)), dat*log(val))
 clip_pos(val) = max(zero(eltype(val)), val)
@@ -49,6 +49,18 @@ Calculate the Anscombe loss between `data` and `fwd`, with an optional backgroun
     - `bg`: A background value to avoid numerical issues, defaulting to zero.
 """
 loss_anscombe(data, fwd, bg=eltype(data)(0)) = sum(abs2.(sqrt.(data.+bg) .- sqrt.(fwd.+bg)))
+
+"""
+    loss_sqrt_anscombe(data, fwd, bg=eltype(data)(0)) = sum(abs2.(sqrt.(data.+bg) .- sqrt.(fwd.+bg)))
+
+Calculate the Squareroot of the Anscombe loss between `data` and `fwd`, with an optional background value `bg` to avoid numerical issues.
+The squareroot was investigated by R. Koch indicating potential speed advances
++ Arguments
+    - `data`: The observed data.
+    - `fwd`: The forward model prediction.
+    - `bg`: A background value to avoid numerical issues, defaulting to zero.
+"""
+loss_sqrt_anscombe(data, fwd, bg=eltype(data)(0)) = sqrt(sum(abs2.(sqrt.(data.+bg) .- sqrt.(fwd.+bg))))
 
 """
     loss_anscombe_pos(data, fwd, bg=eltype(data)(0.01)) = sum(abs2.(sqrt.(clip_pos.(data).+bg) .- sqrt.(clip_pos.(fwd).+bg)))
