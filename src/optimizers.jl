@@ -1,5 +1,5 @@
 # collect other optimizers in addition to what Optim.jl provides
-export steepest_decent_optimizer
+export steepest_decent_optimizer, sgd_optimize
 
 global_G = []
 
@@ -70,9 +70,55 @@ function steepest_decent_optimizer(α=1f0; P! = nothing, norm_vars=[], num_batch
 end
 
 
+"""
+    sgd_optimize(forward_fn, data, loss_type, batch_dim, batch_size, start_vals;
+                 opt_rule=Descent(0.01), iterations=100, shuffle=true, bg=0, verbose=false)
+
+Stochastic gradient descent with mini-batches. The forward model is called
+with `batch_dim`, `batch_idx`, and `n_total` keyword arguments so it only
+computes the current batch's output. The loss is then computed between the
+batched forward output and the corresponding data slice.
+
+Batch-varying parameters must have `ndims(param) >= batch_dim` and
+`size(param, batch_dim) == size(data, batch_dim)`. They are automatically
+sliced along `batch_dim` inside the forward model.
+"""
+function sgd_optimize(forward_fn, data, loss_type, batch_dim, batch_size, start_vals;
+                       opt_rule=Optimisers.Descent(0.01), iterations=100,
+                       shuffle=true, bg=zero(eltype(data)), verbose=false)
+    n_total = size(data, batch_dim)
+    fit_params = copy(start_vals)
+    opt_state = Optimisers.setup(opt_rule, fit_params)
+    losses = Float32[]
+
+    for epoch in 1:iterations
+        order = shuffle ? randperm(n_total) : 1:n_total
+        for batch_start in 1:batch_size:n_total
+            batch_end = min(batch_start + batch_size - 1, n_total)
+            batch_idx = order[batch_start:batch_end]
+            data_batch = selectdim(data, batch_dim, batch_idx)
+
+            val, pb = Zygote.pullback(fit_params) do p
+                fwd_batch = forward_fn(p; batch_dim, batch_idx, n_total)
+                loss_type(data_batch, fwd_batch, bg)
+            end
+            grad = pb(one(eltype(val)))[1]
+
+            opt_state, fit_params = Optimisers.update(opt_state, fit_params, grad)
+            push!(losses, val)
+
+            if verbose
+                println("epoch $epoch, batch $(batch_start:batch_end), loss $val")
+            end
+        end
+    end
+
+    return (minimizer=fit_params, trace=[(value=l,) for l in losses])
+end
+
+
 ## ToDo:  RL-Algorithms, Implement Preconditioners, Holmes&Liu Scheme, Overrelaxition tables
 # directional derivative?
 # alternating projections
 # regularizers for sum contraint, positivity, equality
 # warning for non-normalized data
-# support for batching

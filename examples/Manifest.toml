@@ -1047,7 +1047,7 @@ weakdeps = ["Dates", "Test"]
     InverseFunctionsTestExt = "Test"
 
 [[deps.InverseModeling]]
-deps = ["ChainRulesCore", "ComponentArrays", "IndexFunArrays", "LaTeXStrings", "NDTools", "Optim", "SeparableFunctions", "Zygote"]
+deps = ["ChainRulesCore", "ComponentArrays", "IndexFunArrays", "LaTeXStrings", "NDTools", "Optim", "Optimisers", "Random", "SeparableFunctions", "Zygote"]
 path = ".."
 uuid = "ce844058-9528-415d-a63d-06f3dd08b29f"
 version = "0.2.0"
@@ -1606,6 +1606,22 @@ version = "2.2.1"
 
     [deps.Optim.weakdeps]
     MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
+
+[[deps.Optimisers]]
+deps = ["ChainRulesCore", "ConstructionBase", "Functors", "LinearAlgebra", "Random", "Statistics"]
+git-tree-sha1 = "36b5d2b9dd06290cd65fcf5bdbc3a551ed133af5"
+uuid = "3bd65402-5787-11e9-1adc-39752487f4e2"
+version = "0.4.7"
+
+    [deps.Optimisers.extensions]
+    OptimisersAdaptExt = ["Adapt"]
+    OptimisersEnzymeCoreExt = "EnzymeCore"
+    OptimisersReactantExt = "Reactant"
+
+    [deps.Optimisers.weakdeps]
+    Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+    EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+    Reactant = "3c362404-f566-11ee-1572-e11a4b42c853"
 
 [[deps.Opus_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]

@@ -2,10 +2,11 @@ module InverseModeling
 
 using ComponentArrays
 using IndexFunArrays
-using Optim, Zygote
+using Optim, Optimisers, Zygote
 using SeparableFunctions # for gaussian
 using NDTools # for select_region_view
 using ChainRulesCore # for the rrule definitions
+using Random # for randperm in optimizers
 
 include("utilities.jl")
 include("noise_models.jl")

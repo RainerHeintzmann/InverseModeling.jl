@@ -1,7 +1,7 @@
 name = "InverseModeling"
 uuid = "ce844058-9528-415d-a63d-06f3dd08b29f"
-authors = ["rheintzmann <heintzmann@gmail.com>"]
 version = "0.2.0"
+authors = ["rheintzmann <heintzmann@gmail.com>"]
 
 [deps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
@@ -10,6 +10,8 @@ IndexFunArrays = "613c443e-d742-454e-bfc6-1d7f8dd76566"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 NDTools = "98581153-e998-4eef-8d0d-5ec2c052313d"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SeparableFunctions = "c8c7ead4-852c-491e-a42d-3d43bc74259e"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
@@ -20,6 +22,8 @@ IndexFunArrays = "0.2"
 LaTeXStrings = "1"
 NDTools = "0.7, 0.8"
 Optim = "1, 2"
+Optimisers = "0.4.7"
+Random = "1.11.0"
 SeparableFunctions = "0.3, 0.4, 0.5"
 Zygote = "0.7"
 

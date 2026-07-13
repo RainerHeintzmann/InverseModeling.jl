@@ -21,6 +21,7 @@ using IndexFunArrays
 using Noise
 using CUDA
 # using Zygote
+using Optimisers
 using Plots
 
 # function get_apsf(sz, z, )
@@ -39,9 +40,9 @@ end
 returns shifted diffusors
 """
 function get_diffusors(sz, screen, shifts)
-    # tmp = Array(Zygote.@ignore round.(Int, shifts))
     tmp = Array(Int.(shifts))
-    slices = [screen[start[1]:start[1]+sz[1]-1,start[2]:start[2]+sz[2]-1] for start in eachslice(tmp, dims=1) ]
+    d = ndims(tmp) == 2 ? 1 : ndims(tmp)
+    slices = [screen[start[1]:start[1]+sz[1]-1,start[2]:start[2]+sz[2]-1] for start in eachslice(tmp, dims=d)]
     return stack(slices; dims=3)
 end
 
@@ -51,7 +52,8 @@ function calc_diffusor_mean(nimg, shifts, bigsz)
     tmp = Array(Int.(shifts))
     sz = size(nimg)[1:2]
     snum=1
-    for start in eachslice(tmp, dims=1)
+    d = ndims(tmp) == 2 ? 1 : ndims(tmp)
+    for start in eachslice(tmp, dims=d)
         screen[start[1]:start[1]+sz[1]-1,start[2]:start[2]+sz[2]-1] .+= nimg[:,:,snum]
         mysum[start[1]:start[1]+sz[1]-1,start[2]:start[2]+sz[2]-1] .+= 1
         snum += 1
@@ -66,7 +68,8 @@ function calc_diffusor_sum(nimg, shifts, bigsz)
     tmp = Array(Int.(shifts))
     sz = size(nimg)[1:2]
     snum=1
-    for start in eachslice(tmp, dims=1) 
+    d = ndims(tmp) == 2 ? 1 : ndims(tmp)
+    for start in eachslice(tmp, dims=d) 
         screen[start[1]:start[1]+sz[1]-1,start[2]:start[2]+sz[2]-1] .+= nimg[:,:,snum]
         snum += 1
     end
@@ -81,18 +84,16 @@ obj -> atdiffusor * diffusor-> detection
 Note that the first part is intenstionally ignored and the result therefore needs a nother back propagation step
 
 """
-function fwd_model(params, plan_ds)
-    # obj = params(:obj)
-    # prop_od = params(:prop_od)
+function fwd_model(params, prop_ds, obj_size)
     screen = params(:screen)
     shifts = params(:shifts)
 
-    diffusor = get_diffusors(size(obj)[1:2], screen, shifts)
+    diffusor = get_diffusors(obj_size, screen, shifts)
 
-    # atdiffusor = conv_psf(obj, prop_od, (1,2))
     atdiffusor = params(:obj) # the object is already assumed to have previously been forward propagted to the diffusor
     atdiffusor = atdiffusor .* diffusor
-    atsensor = plan_ds(atdiffusor) # conv_psf(atdiffusor, prop_ds, (1,2))
+    # use conv_psf (no pre-planned FFT) so arbitrary batch sizes work
+    atsensor = conv_psf(atdiffusor, prop_ds, (1,2))
     abs2.(atsensor)  # return the stack of intensity images at the sensor
 end
 
@@ -255,18 +256,9 @@ function main()
     screen = get_diffusor(size(obj); σ_mag=0.2, σ_phase=0.4, fmax=0.3);
     midpos = [(size(screen).÷2 .+1)...] .- [(size(obj).÷2 .+1)...]
     shifts = permutedims(cat(shifts_r..., dims=2) .+ midpos, (2,1))
-    # diffusor = get_diffusors(size(obj), screen, shifts)
-    otf, p_ds = plan_conv_psf_buffer(get_diffusors(size(obj), screen, shifts), prop_ds, (1,2))
-
-    # @vp diffusor
-
-    # int_sensor = simulate_data(obj, prop_od, prop_ds, diffusor)
-
-    # @vt int_sensor
-
     start_val = (obj=obj_at_diffusor, screen=Fixed(screen), shifts=Fixed(shifts))
 
-    start_vals, fixed_vals, forward, backward, get_fit_results = create_forward((x)->fwd_model(x, p_ds), start_val)
+    start_vals, fixed_vals, forward, backward, get_fit_results = create_forward((x)->fwd_model(x, prop_ds, size(obj)), start_val)
 
     pimg = forward(start_vals)
     nphotons = 10000;
@@ -335,14 +327,11 @@ function main()
     # start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_conv, start_val)
     # optim_res = InverseModeling.optimize(loss(nimg, forward), start_vals, iterations=80);
     optional_reclaim()
-    alpha = 3.0 # 0.01
     # optimizer = InverseModeling.LBFGS()
     # optimizer = InverseModeling.GradientDescent()
-    optimizer = InverseModeling.GradientDescent(; alphaguess=alpha)
+    optimizer = InverseModeling.GradientDescent(; alphaguess=α)
  
-    # plan_conv_psf_buffer
-    otf, p_ds = plan_conv_psf_buffer(get_diffusors(size(obj), to_cu(const_screen), shifts), to_cu(prop_ds), (1,2))
-    my_fwd= (x) -> fwd_model(x, p_ds)
+    my_fwd= (x) -> fwd_model(x, to_cu(prop_ds), size(obj))
     @time res_obj, myloss_obj = optimize_model(start_val_obj, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
     # @time res1, myloss1 = optimize_model(start_val, my_fwd, torecon, loss_anscombe; iterations=200, optimizer=GradientDescent())
 
@@ -388,7 +377,18 @@ The Preconditioner is applied to each calculated gradient before performing the 
 
     @time res_both_gd2, myloss_both_gd2 = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer((obj=4f0/2/size(nimg,3),screen=4f0/2/size(nimg,3)), norm_vars=[:obj, :screen], verbose=true)) # 0.05
     plot!(myloss_both_gd2, label="gradient descent 2", linestyle = :dashdot)
-    
+
+    # ── SGD with mini-batches (via Optimisers.jl) ──
+    # shifts must be (2, 1, n_frames) so the framework slices along batch_dim=3
+    shifts_batch = reshape(permutedims(shifts), 2, 1, :)
+    start_val_sgd = (obj=start_val_both.obj, screen=start_val_both.screen, shifts=Fixed(to_cu(shifts_batch)))
+    batch_size = 5
+    @time res_sgd, loss_sgd = optimize_model(
+        start_val_sgd, my_fwd, torecon, loss_anscombe;
+        iterations=N/5, batch_size=batch_size, optimizer=Adam(0.05f0), verbose=true)
+
+    plot!(loss_sgd, label="batched sgd", linestyle = :dashdot)
+        
 ##
     plot(myloss_obj, yaxis=:log, xlabel="iteration", ylabel="Anscombe loss", label="fixed screen")
     # plot!(myloss_obj, label="fixed screen, obj structured")
@@ -398,7 +398,8 @@ The Preconditioner is applied to each calculated gradient before performing the 
     plot!(myloss_both_cg, label="both conj. grad.")
     plot!(myloss_both_gd, label="both grad. desc.")
     plot!(myloss_both_epie, label="both epie")
-
+    plot!(loss_sgd, label="SGD Adam (batch_size=$(batch_size))", linestyle = :dashdot)
+    
 ##    
     # @vtp res_epie[:obj]
     # @vtp res_epie[:screen]
@@ -412,6 +413,8 @@ The Preconditioner is applied to each calculated gradient before performing the 
     show_it(res_both[:screen], screen, vd)
     show_it(res_both_gd[:screen], screen, vd)
     show_it(res_both_epie[:screen], screen, vd)
-
+    
 ##    
 end
+
+
