@@ -113,13 +113,13 @@ function loss(data, forward, my_norm = loss_gaussian, bg=eltype(data)(0))
 end
 
 """
-    optimize_model(loss_fkt, start_vals; iterations=100, optimizer=LBFGS(), kwargs...)
+    optimize_model(loss_fct, start_vals; iterations=100, optimizer=LBFGS(), kwargs...)
 
 performs the optimization of the model parameters by calling Optim.optimize() and returns the result.
 Other options such as `store_trace=true` can be provided and will be passed to `Optim.Options`.
 
 #arguments
-+ `loss_fkt`        : the loss function to optimize
++ `loss_fct`        : the loss function to optimize
 + `start_vals`      : the set of parameters over which the optimization is performed
 + `iterations`      : number of iterations to perform (default: 100). This is provided via the `Optim.Options` stucture.
 + `optimizer=LBFGS()`: the optimizer to use
@@ -127,31 +127,26 @@ Other options such as `store_trace=true` can be provided and will be passed to `
 #returns
 the result as provided by Optim.optimize()
 """
-function optimize_model(loss_fkt::Function, start_vals; iterations=100, optimizer=LBFGS(), optimize=Optim.optimize, kwargs...)
+function optimize_model(loss_fct::Function, start_vals; iterations=100, optimizer=LBFGS(), optimize=Optim.optimize, kwargs...)
     optim_options = Optim.Options(;iterations=iterations, kwargs...)
 
     function fg!(F, G, vec)
-        #val, mygrad = Zygote.withgradient(loss_fkt, vec)
-        val_pb = Zygote.pullback(loss_fkt, vec);
-        # println("in fg!: F:$(!isnothing(F)) G:$(!isnothing(G))")
         if !isnothing(G)
-            # G .= mygrad
-            # @show val_pb[2](one(eltype(vec)))[1]
+            val_pb = Zygote.pullback(loss_fct, vec)
             G .= val_pb[2](one(eltype(vec)))[1]
-            # mutating calculations specific to g!
-        end
-        if !isnothing(F)
-            # calculations specific to f
-            return val_pb[1]
-            # return val # val_pb[1]
+            if !isnothing(F)
+                return val_pb[1]
+            end
+        else
+            return loss_fct(vec)
         end
     end
     od = OnceDifferentiable(Optim.NLSolversBase.only_fg!(fg!), start_vals)
-    # g!(G, vec) = G.=gradient(loss_fkt, vec)[1]
-
-    optim_res = optimize(od, start_vals, optimizer, optim_options)
-    # optim_res = Optim.optimize(loss_fkt, g!, start_vals, optimizer, optim_options)
-    # optim_res = Optim.optimize(loss_fkt, start_vals, optimizer, optim_options) # ;  autodiff = :forward
+    if optimize === Optim.optimize
+        optim_res = optimize(od, start_vals, optimizer, optim_options)
+    else
+        optim_res = optimize(od, start_vals, optimizer, optim_options, loss_fct)
+    end
     optim_res
 end
 
@@ -176,7 +171,7 @@ if the argument ``store_trace=false` is provided no trace will be returned.
 #See also:
 The other (low-level) version of `optimize_model` with the loss function as the first argument.
 """
-function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian; iterations=100, optimizer=LBFGS(), store_trace=true, batch_size=nothing, batch_dim=ndims(meas), bg=eltype(meas)(0), learning_rate=1f0, shuffle=true, verbose=false, kwargs...)
+function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_type=loss_gaussian; iterations=100, optimizer=LBFGS(), store_trace=true, batch_size=nothing, batch_dim=ndims(meas), bg=eltype(meas)(0), learning_rate=1f0, shuffle=true, verbose=false, project! = nothing, kwargs...)
     start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_model, start_val);
 
     if optimizer isa Optimisers.AbstractRule || (batch_size !== nothing && batch_size < size(meas, batch_dim))
@@ -185,7 +180,7 @@ function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_t
         opt_rule = optimizer isa Optimisers.AbstractRule ? optimizer : Optimisers.Descent(Float32(learning_rate))
         optim_res = sgd_optimize(forward, meas, loss_type, batch_dim, sgd_batch_size, start_vals;
                                  opt_rule=opt_rule, iterations=iterations,
-                                 shuffle=shuffle, bg=bg, verbose=verbose)
+                                 shuffle=shuffle, bg=bg, verbose=verbose, project! = project!)
         bare, res = get_fit_results(optim_res)
         if store_trace
             return res, [t.value for t in optim_res.trace]
@@ -193,8 +188,12 @@ function optimize_model(start_val::NamedTuple, fwd_model::Function, meas, loss_t
             return res
         end
     else
-        # ── full-batch optimization via Optim.jl ──
-        optim_res = InverseModeling.optimize_model(loss(meas, forward, loss_type, bg), start_vals; iterations=iterations, optimizer=optimizer, store_trace=store_trace, kwargs...);
+        # ── full-batch optimization ──
+        if optimizer isa Function
+            optim_res = InverseModeling.optimize_model(loss(meas, forward, loss_type, bg), start_vals; iterations=iterations, optimize=optimizer, store_trace=store_trace, kwargs...)
+        else
+            optim_res = InverseModeling.optimize_model(loss(meas, forward, loss_type, bg), start_vals; iterations=iterations, optimizer=optimizer, store_trace=store_trace, kwargs...)
+        end
         bare, res = get_fit_results(optim_res)
         if store_trace
             return res, [t.value for t in optim_res.trace][2:end]

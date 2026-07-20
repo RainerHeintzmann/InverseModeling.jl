@@ -8,12 +8,14 @@ ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
 IndexFunArrays = "613c443e-d742-454e-bfc6-1d7f8dd76566"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NDTools = "98581153-e998-4eef-8d0d-5ec2c052313d"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SeparableFunctions = "c8c7ead4-852c-491e-a42d-3d43bc74259e"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 
 [compat]
 ChainRulesCore = "1"
@@ -26,6 +28,15 @@ Optimisers = "0.4.7"
 Random = "1.11.0"
 SeparableFunctions = "0.3, 0.4, 0.5"
 Zygote = "0.7"
+ForwardDiff = "1.4.1"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+
+[extensions]
+CUDASupportExt_FFTPlan = ["CUDA", "ForwardDiff","AbstractFFTs"]
+
 
 [extras]
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"

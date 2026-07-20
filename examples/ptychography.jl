@@ -84,17 +84,27 @@ obj -> atdiffusor * diffusor-> detection
 Note that the first part is intenstionally ignored and the result therefore needs a nother back propagation step
 
 """
-function fwd_model(params, prop_ds, obj_size)
-    screen = params(:screen)
-    shifts = params(:shifts)
+function get_fwd_model(sz, prop_ds, batch_size=sz[end])
+    # _, myplan = plan_conv_psf_buffer(similar(prop_ds, sz), prop_ds, (1,2))
+    myplan_fct(dat) = plan_conv_psf_buffer(dat, prop_ds, (1,2))[2]
+    myplan = batch_plan(myplan_fct, sz, prop_ds, length(sz), batch_size)
 
-    diffusor = get_diffusors(obj_size, screen, shifts)
+    # function fwd_model(params, prop_ds, obj_size)
+    function fwd_model(params)
+        screen = params(:screen)
+        shifts = params(:shifts)
+        atdiffusor = params(:obj) # the object is already assumed to have previously been forward propagted to the diffusor
 
-    atdiffusor = params(:obj) # the object is already assumed to have previously been forward propagted to the diffusor
-    atdiffusor = atdiffusor .* diffusor
-    # use conv_psf (no pre-planned FFT) so arbitrary batch sizes work
-    atsensor = conv_psf(atdiffusor, prop_ds, (1,2))
-    abs2.(atsensor)  # return the stack of intensity images at the sensor
+        diffusor = get_diffusors(size(atdiffusor), screen, shifts)
+
+        atdiffusor = atdiffusor .* diffusor
+        # use conv_psf (no pre-planned FFT) so arbitrary batch sizes work
+        # atsensor = conv_psf(atdiffusor, prop_ds, (1,2))
+        atsensor = myplan(atdiffusor)
+        # atsensor = atdiffusor
+        abs2.(atsensor)  # return the stack of intensity images at the sensor
+    end
+    return fwd_model
 end
 
 """
@@ -258,7 +268,10 @@ function main()
     shifts = permutedims(cat(shifts_r..., dims=2) .+ midpos, (2,1))
     start_val = (obj=obj_at_diffusor, screen=Fixed(screen), shifts=Fixed(shifts))
 
-    start_vals, fixed_vals, forward, backward, get_fit_results = create_forward((x)->fwd_model(x, prop_ds, size(obj)), start_val)
+    # my_fwd= (x) -> fwd_model(x, to_cu(prop_ds), size(obj))
+    my_fwd = get_fwd_model((size(prop_ds)..., size(start_val[:shifts], 1)), prop_ds)
+
+    start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(my_fwd, start_val)
 
     pimg = forward(start_vals)
     nphotons = 10000;
@@ -293,6 +306,15 @@ function main()
     to_cu = (x)-> (use_cuda) ? cu(x) : x
     optional_reclaim = () -> (use_cuda) ?  CUDA.reclaim() : nothing
 
+    function optional_convert(x)
+        res = (k=Array.(x[k]) for k in keys(x))
+        optional_reclaim()
+        res
+    end
+
+    num_shifts = size(start_val[:shifts], 1)
+    my_fwd = get_fwd_model((size(prop_ds)..., num_shifts), to_cu(prop_ds))
+
     torecon = to_cu(nimg)
     start_val_obj = (obj=to_cu(const_obj), screen=Fixed(to_cu(screen)), shifts=Fixed(to_cu(shifts)))
     # optimize only the diffusor:
@@ -300,28 +322,29 @@ function main()
     # optimize both obj and diffusor:
     start_val_both = (obj=to_cu(const_obj), screen=to_cu(const_screen), shifts=Fixed(to_cu(shifts)))
 
-
 ## reconstruct data now
     # here is the classical epie algorithm with the batchsize equal to the full measurement
     # To implement alternating direction methods, we need to copy data between the iterations
-    optional_reclaim()
-   
+
+    optional_reclaim()   
     α = 4f0; β=4f0
     N = 200
     start_val_epie_both = (obj=to_cu(const_obj), prop_ds=to_cu(prop_ds), screen=to_cu(const_screen), shifts=to_cu(shifts))
     # ground truth values for debugging only:
     # start_val_epie = (obj=to_cu(obj), prop_ds=to_cu(prop_ds), screen=to_cu(screen), shifts=to_cu(shifts))
     CUDA.@time res_epie_both, myloss_both_epie = epie(start_val_epie_both, torecon, N; α=α, β=β, global_alpha=true)    
+    res_epie_both = optional_convert(res_epie_both) # to free some CUDA memory
     plot(myloss_both_epie, yaxis=:log10, label="both epie", xlabel="iterations", ylabel="Anscombe Loss")
-    plot!(myloss_both_epie, yaxis=:log10, label="both epie")
+    # plot!(myloss_both_epie, yaxis=:log10, label="both epie")
 
-    start_val_epie_screen = (obj=to_cu(obj_at_diffusor), prop_ds=to_cu(prop_ds), screen=to_cu(const_screen), shifts=to_cu(shifts))
-    res_epie_screen, losses_epie_screen = epie(start_val_epie_screen, torecon, N; α=α, β=β, fix_obj=true)
-    plot!(losses_epie_screen, yaxis=:log10, label="screen epie")
+    # start_val_epie_screen = (obj=to_cu(obj_at_diffusor), prop_ds=to_cu(prop_ds), screen=to_cu(const_screen), shifts=to_cu(shifts))
+    # res_epie_screen, losses_epie_screen = epie(start_val_epie_screen, torecon, N; α=α, β=β, fix_obj=true)
+    # res_epie_screen = optional_convert(res_epie_screen) # to free some CUDA memory
+    # plot!(losses_epie_screen, yaxis=:log10, label="screen epie")
 
-    start_val_epie_obj = (obj=to_cu(const_obj), prop_ds=to_cu(prop_ds), screen=to_cu(screen), shifts=to_cu(shifts))
-    res_epie_obj, losses_epie_obj = epie(start_val_epie_obj, torecon, N; α=α, β=β, fix_screen=true)
-    plot!(losses_epie_obj, yaxis=:log10, label="obj epie")
+    # start_val_epie_obj = (obj=to_cu(const_obj), prop_ds=to_cu(prop_ds), screen=to_cu(screen), shifts=to_cu(shifts))
+    # res_epie_obj, losses_epie_obj = epie(start_val_epie_obj, torecon, N; α=α, β=β, fix_screen=true)
+    # plot!(losses_epie_obj, yaxis=:log10, label="obj epie")
     # @vtp res_epie_both[:obj] res_epie_screen[:obj] res_epie_obj[:obj]
 
     # start_vals, fixed_vals, forward, backward, get_fit_results = create_forward(fwd_conv, start_val)
@@ -331,25 +354,29 @@ function main()
     # optimizer = InverseModeling.GradientDescent()
     optimizer = InverseModeling.GradientDescent(; alphaguess=α)
  
-    my_fwd= (x) -> fwd_model(x, to_cu(prop_ds), size(obj))
-    @time res_obj, myloss_obj = optimize_model(start_val_obj, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
-    # @time res1, myloss1 = optimize_model(start_val, my_fwd, torecon, loss_anscombe; iterations=200, optimizer=GradientDescent())
+    # @time res_obj, myloss_obj = optimize_model(start_val_obj, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
+    # # @time res1, myloss1 = optimize_model(start_val, my_fwd, torecon, loss_anscombe; iterations=200, optimizer=GradientDescent())
+    # res_obj = optional_convert(res_obj)
 
-    optional_reclaim()
-    @time res_diffusor, myloss_diffusor = optimize_model(start_val_diffusor, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
+    # optional_reclaim()
+    # @time res_diffusor, myloss_diffusor = optimize_model(start_val_diffusor, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
 
     optional_reclaim()
     # alpha = 0.01
     # optimizer = InverseModeling.GradientDescent(; alphaguess=alpha)
     optimizer = InverseModeling.LBFGS()
     @time res_both, myloss_both = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
+    res_both = optional_convert(res_both)
 
-    optimizer = InverseModeling.LBFGS()
-    @time res_both_sqrt, myloss_both_sqrt = optimize_model(start_val_both, my_fwd, torecon, loss_sqrt_anscombe; iterations=N, optimizer=optimizer)
+    # optional_reclaim()
+    # optimizer = InverseModeling.LBFGS()
+    # @time res_both_sqrt, myloss_both_sqrt = optimize_model(start_val_both, my_fwd, torecon, loss_sqrt_anscombe; iterations=N, optimizer=optimizer)
+
 
     optimizer = InverseModeling.ConjugateGradient()
     optional_reclaim()
     @time res_both_cg, myloss_both_cg = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimizer=optimizer)
+    res_both_cg = optional_convert(res_both_cg)
 
 """
     P!(vals, G, α=1.0, β=1.0)
@@ -357,7 +384,6 @@ function main()
 a precoditioner to make the steepest gradient descent algorithm identical to ePIE
 The Preconditioner is applied to each calculated gradient before performing the update step.
 """
-# myprop = to_cu(prop_od)
     function P!(vals, G, α=α, β=β)  # 1.5
         # diffusor = get_diffusors(size(obj_at_diffusor)[1:2], screen, shifts)
         # @show keys(vals)
@@ -371,35 +397,138 @@ The Preconditioner is applied to each calculated gradient before performing the 
         # println("alpha_obj: $(alpha_obj), beta_screen: $(beta_screen)")
     end
 
+    # optional_reclaim()
+    # CUDA.@time res_both_gd, myloss_both_gd = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(Float32(1/size(nimg,3))/2; P! = P!, verbose=true)) # 0.05
+    # res_both_gd = optional_convert(res_both_gd)
+    # plot!(myloss_both_gd, label="gradient descent PC", linestyle = :dash)
+
     optional_reclaim()
-    CUDA.@time res_both_gd, myloss_both_gd = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(Float32(1/size(nimg,3))/2; P! = P!, verbose=true)) # 0.05
-    plot!(myloss_both_gd, label="gradient descent", linestyle = :dash)
+    # just a test to monitor the memory usage:
+    # @time res_both_gd2, myloss_both_gd2 = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(0.01, verbose=true)) # 0.05
 
     @time res_both_gd2, myloss_both_gd2 = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer((obj=4f0/2/size(nimg,3),screen=4f0/2/size(nimg,3)), norm_vars=[:obj, :screen], verbose=true)) # 0.05
-    plot!(myloss_both_gd2, label="gradient descent 2", linestyle = :dashdot)
+    res_both_gd2 = optional_convert(res_both_gd2)
+    plot!(myloss_both_gd2, label="gradient descent Normed", linestyle = :dashdot)
+
+    optional_reclaim()
+    N=200
+    @time res_both_dd, myloss_both_dd = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(1f0, schedule=schedule_directional_hessian(), verbose=true)) # 0.05
+    res_both_dd = optional_convert(res_both_dd)
+    plot!(myloss_both_dd, label="directional derivative", linestyle = :dashdot)
+
+    # use a table schedule
+    optional_reclaim()
+    @time res_both_table, myloss_both_table = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(0.02f0, schedule=schedule_table(), verbose=true)) # 0.05
+    res_both_table = optional_convert(res_both_table)
+    plot!(myloss_both_table, label="α from table", linestyle = :dashdot)
+
+    # exponential schedule
+    optional_reclaim()
+    @time res_both_exp, myloss_both_exp = optimize_model(start_val_both, my_fwd, torecon, loss_anscombe; iterations=N, optimize=steepest_decent_optimizer(0.025f0, schedule=schedule_exp(1.002f0), verbose=true)) # 0.05
+    res_both_exp = optional_convert(res_both_exp)
+    plot!(myloss_both_exp, label="exponential α", linestyle = :dashdot)
 
     # ── SGD with mini-batches (via Optimisers.jl) ──
     # shifts must be (2, 1, n_frames) so the framework slices along batch_dim=3
     shifts_batch = reshape(permutedims(shifts), 2, 1, :)
     start_val_sgd = (obj=start_val_both.obj, screen=start_val_both.screen, shifts=Fixed(to_cu(shifts_batch)))
-    batch_size = 5
-    @time res_sgd, loss_sgd = optimize_model(
-        start_val_sgd, my_fwd, torecon, loss_anscombe;
-        iterations=N/5, batch_size=batch_size, optimizer=Adam(0.05f0), verbose=true)
+    batch_size = 5 # 25
+    my_batched_fwd = get_fwd_model((size(prop_ds)..., num_shifts), to_cu(prop_ds), batch_size)
 
-    plot!(loss_sgd, label="batched sgd", linestyle = :dashdot)
-        
-##
+    optional_reclaim()
+    @time res_sgd, loss_sgd = optimize_model(start_val_sgd, my_batched_fwd, torecon, loss_anscombe;
+        iterations=N, batch_size=batch_size, optimizer=Adam(0.05f0), verbose=true)
+
+    res_sgd = optional_convert(res_sgd)    
+    plot!(loss_sgd, label="batched (bs=$batch_size) sgd", linestyle = :dashdot)
+
+    # ── DM (Difference Map) with two projections ──
+    optional_reclaim()
+    conj_prop_ds = to_cu(ifft(conj(fft(prop_ds))))
+    prop_ds_cu = to_cu(prop_ds)
+    obj_sz = size(const_obj)
+    sqrt_meas = sqrt.(max.(0, torecon))
+
+    function amp_constraint!(params)
+        obj = params[:obj]
+        screen = params[:screen]
+
+        diffusor = get_diffusors(obj_sz, screen, shifts_batch)
+        atdiffusor = obj .* diffusor
+        atsensor = conv_psf(atdiffusor, prop_ds_cu, (1,2))
+        atsensor .= sqrt_meas .* cis.(angle.(atsensor))
+        corrected = conv_psf(atsensor, conj_prop_ds, (1,2))
+
+        nd = max.(sum(abs2, diffusor, dims=3), 1f-10)
+        params[:obj] .= sum(conj.(diffusor) .* corrected, dims=3) ./ nd
+
+        # screen update: least-squares patch estimate from corrected exit waves
+        nf = max.(abs2.(params[:obj]), 1f-10)
+        corr_patches = conj.(params[:obj]) .* corrected ./ nf
+        tmp = Array(Int.(shifts_batch))
+        d = ndims(tmp) == 2 ? 1 : ndims(tmp)
+        sz = (size(obj, 1), size(obj, 2))
+        new_screen = similar(screen, ComplexF32, size(screen)); new_screen .= 0
+        weight = similar(screen, Float32, size(screen)); weight .= 0
+        for (i, start) in enumerate(eachslice(tmp, dims=d))
+            r = start[1]:start[1]+sz[1]-1
+            c = start[2]:start[2]+sz[2]-1
+            view(new_screen, r, c) .+= corr_patches[:,:,i]
+            view(weight, r, c) .+= 1
+        end
+        params[:screen] .= new_screen ./ max.(weight, 1)
+        nothing
+    end
+
+    function diffusor_constrain!(params)
+        # overlap consistency constraint:
+        # Re-estimate (obj, screen) from the current exit waves
+        # via least-squares factorization.
+        obj = params[:obj]
+        screen = params[:screen]
+
+        diffusor = get_diffusors(obj_sz, screen, shifts_batch)
+        exit_waves = obj .* diffusor
+
+        # least-squares obj: average per-position estimates weighted by |patch|²
+        nd = max.(sum(abs2, diffusor, dims=3), 1f-10)
+        params[:obj] .= sum(conj.(diffusor) .* exit_waves, dims=3) ./ nd
+
+        # least-squares screen: per-position patches from new obj
+        nf = max.(abs2.(params[:obj]), 1f-10)
+        corr_patches = conj.(params[:obj]) .* exit_waves ./ nf
+        tmp = Array(Int.(shifts_batch))
+        d = ndims(tmp) == 2 ? 1 : ndims(tmp)
+        sz = (size(obj, 1), size(obj, 2))
+        new_screen = similar(screen, ComplexF32, size(screen)); new_screen .= 0
+        weight = similar(screen, Float32, size(screen)); weight .= 0
+        for (i, start) in enumerate(eachslice(tmp, dims=d))
+            r = start[1]:start[1]+sz[1]-1
+            c = start[2]:start[2]+sz[2]-1
+            view(new_screen, r, c) .+= corr_patches[:,:,i]
+            view(weight, r, c) .+= 1
+        end
+        params[:screen] .= new_screen ./ max.(weight, 1)
+        nothing
+    end
+
+    @time res_dm, loss_dm = optimize_model(start_val_sgd, my_fwd, torecon, loss_anscombe;
+        iterations=N, optimize=dm_optimizer(0.5f0; P1! = amp_constraint!, P2! = diffusor_constrain!, verbose=true))
+
+    plot!(loss_dm, label="DM (overlap consistency)", linestyle = :dash)
+
+    ##
     plot(myloss_obj, yaxis=:log, xlabel="iteration", ylabel="Anscombe loss", label="fixed screen")
     # plot!(myloss_obj, label="fixed screen, obj structured")
     plot!(myloss_diffusor, label="only diffusor")
     plot!(myloss_both, label="both LBFGS")
-    plot!(abs2.(myloss_both_sqrt), label="both sqrt Anscombe")
+    plot!(abs2.(myloss_both_sqrt), label="both LBFGS sqrt Anscombe")
     plot!(myloss_both_cg, label="both conj. grad.")
     plot!(myloss_both_gd, label="both grad. desc.")
     plot!(myloss_both_epie, label="both epie")
     plot!(loss_sgd, label="SGD Adam (batch_size=$(batch_size))", linestyle = :dashdot)
-    
+    plot!(loss_dm, label="DM (overlap consistency)", linestyle = :dash)
+
 ##    
     # @vtp res_epie[:obj]
     # @vtp res_epie[:screen]
@@ -408,11 +537,13 @@ The Preconditioner is applied to each calculated gradient before performing the 
     show_it(res_both[:obj], obj, vo, conj_prop_od=conj_prop_od)
     show_it(res_both_gd[:obj], obj, vo, conj_prop_od=conj_prop_od)
     show_it(res_epie[:obj], obj, vo, conj_prop_od=conj_prop_od)
+    show_it(res_sgd[:obj], obj, vo, conj_prop_od=conj_prop_od)
 
     vd = show_it(res_diffusor[:screen], screen; show_gt=true)
     show_it(res_both[:screen], screen, vd)
     show_it(res_both_gd[:screen], screen, vd)
     show_it(res_both_epie[:screen], screen, vd)
+    show_it(res_sgd[:screen], screen, vd)
     
 ##    
 end
